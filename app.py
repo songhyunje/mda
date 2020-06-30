@@ -12,7 +12,7 @@ from pymongo import MongoClient
 with open('config.yaml', 'r') as ymlfile:
     cfg = yaml.load(ymlfile, Loader=yaml.BaseLoader)
 
-client = MongoClient()
+client = MongoClient(host=cfg['server']['host'])
 db = client[cfg['server']['db']]
 
 table_header_style = {
@@ -27,6 +27,11 @@ def layout():
         html.Div(
             [
                 dcc.Input(id="input-id", type="text", placeholder="", debounce=True),
+                html.Button('Trash',
+                            id='trash-button',
+                            n_clicks=0,
+                            style={'float': 'right'}
+                            ),
             ],
         ),
         html.Div(
@@ -38,19 +43,19 @@ def layout():
                             "name": "ObjectId",
                             "id": "column-index",
                             "type": "numeric",
-                            "selectable": True
+                            "selectable": True,
                         },
                         {
                             "name": "Summary",
                             "id": "column-summary",
                             "type": "text",
-                            "selectable": True
+                            "selectable": True,
                         },
                         {
                             "name": "Datetime",
                             "id": "column-datetime",
                             "type": "datetime",
-                            "selectable": False
+                            "selectable": False,
                         }
                     ],
                     # fixed_columns={'headers': True, 'data': 1},
@@ -58,6 +63,7 @@ def layout():
                     css=[{'selector': 'table', 'rule': 'table-layout: fixed'}],
                     style_header=table_header_style,
                     fixed_columns={"headers": True},
+                    # row_deletable=True,
                     # active_cell={"row": 0, "column": 0},
                     # row_selectable="single",  # radio button
                     style_cell={'textAlign': 'left'},
@@ -80,6 +86,7 @@ def layout():
                 html.Button('submit',
                             id='submit-button',
                             n_clicks=0,
+                            style={'width': '20%'}
                             ),
                 html.I(id='output'),
             ]
@@ -139,7 +146,7 @@ app.layout = layout
         Input('input-id', 'n_submit'),
     ])
 def update_table(value, n_submit):
-    retrieved_posts = db.posts.find({'category': value})
+    retrieved_posts = db.posts.find({'worker': value})
     records, marked = [], []
 
     for post in retrieved_posts:
@@ -205,9 +212,14 @@ def load_news(row_ids, selected_row_ids, active_cell, data):
 
 
 @app.callback(
+    # [
+    #     Output('output', 'children'),
+    #     Output('data-table', 'data'),
+    # ],
     Output('output', 'children'),
     [
         Input('submit-button', 'n_clicks'),
+        Input('trash-button', 'n_clicks'),
     ],
     [
         State('data-table', 'data'),
@@ -215,18 +227,45 @@ def load_news(row_ids, selected_row_ids, active_cell, data):
         State('textarea-summary', 'value')
     ]
 )
-def update_output(n_clicks, data, active_cell, value):
-    if n_clicks > 0 and active_cell:
-        object_id = data[active_cell['row']]['column-index']
-        date_time = datetime.datetime.now()
-        db.posts.update_one(
-            {"_id": ObjectId(object_id)},
-            {"$set": {"summary": value, "completed": True,
-                      "update_datetime": date_time.strftime("%m/%d/%Y, %H:%M:%S")}},
-            upsert=True
-        )
-        return "Updated"
+def update_output(btn1, btn2, data, active_cell, value):
+    message = ""
+    if active_cell:
+        changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
+        if 'submit-button' in changed_id:
+            object_id = data[active_cell['row']]['column-index']
+            date_time = datetime.datetime.now()
+            db.posts.update_one(
+                {"_id": ObjectId(object_id)},
+                {"$set": {"summary": value, "completed": True,
+                          "update_datetime": date_time.strftime("%m/%d/%Y, %H:%M:%S")}},
+                upsert=True
+            )
+            message = "Updated"
+        elif 'trash-button' in changed_id:
+            object_id = data[active_cell['row']]['column-index']
+            db.posts.delete_one({"_id": ObjectId(object_id)})
+            # del data[active_cell['row']]
+            message = "Erased"
+
+    return message  #, data if data else []
+
+
+# @app.callback(
+#     Output('output', 'children'),
+#     [
+#         Input('trash-button', 'n_clicks'),
+#     ],
+#     [
+#         State('data-table', 'data'),
+#         State('data-table', 'active_cell'),
+#     ]
+# )
+# def update_output(n_clicks, data, active_cell):
+#     if n_clicks > 0 and active_cell:
+#         object_id = data[active_cell['row']]['column-index']
+#         db.posts.delete_one({"_id": ObjectId(object_id)})
+#         return "Erased"
 
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(host="0.0.0.0", port=8899, debug=True)
