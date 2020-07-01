@@ -27,6 +27,7 @@ def layout():
         html.Div(
             [
                 dcc.Input(id="input-id", type="text", placeholder="", debounce=True),
+                html.Button('Search', id='search-button', n_clicks=0),
                 html.Button('Trash',
                             id='trash-button',
                             n_clicks=0,
@@ -63,9 +64,7 @@ def layout():
                     css=[{'selector': 'table', 'rule': 'table-layout: fixed'}],
                     style_header=table_header_style,
                     fixed_columns={"headers": True},
-                    # row_deletable=True,
                     # active_cell={"row": 0, "column": 0},
-                    # row_selectable="single",  # radio button
                     style_cell={'textAlign': 'left'},
                     style_cell_conditional=[
                         {'if': {'column_id': 'column-index'}, 'width': '12%'},
@@ -87,8 +86,7 @@ def layout():
                             id='submit-button',
                             n_clicks=0,
                             style={'width': '20%'}
-                            ),
-                html.I(id='output'),
+                            )
             ]
         )
     ])
@@ -100,79 +98,10 @@ app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 app.layout = layout
 
 
-# @app.callback(
-#     Output('source-container', 'children'),
-#     [Input('input-id', 'value')],
-#     [State('source-container', 'children')])
-# def update_news(value, children):
-#     retrieved_posts = db.posts.find({'category': value})
-#     for post in retrieved_posts:
-#         for news in post['news']:
-#             children.append(html.H6(children=news))
-#         return children
-#
-#     return []
-#
-#
-# @app.callback(
-#     Output('textarea-summary', 'value'),
-#     [Input('input-id', 'value')])
-# def update_news(value):
-#     retrieved_posts = db.posts.find({'category': value})
-#     for post in retrieved_posts:
-#         return post['summary']
-#
-#     return ""
-
-# @app.callback(
-#     Output('data-table', 'data'),
-#     [Input('input-id', 'value')])
-# def update_table(value):
-#     retrieved_posts = db.posts.find({'category': value})
-#     records = []
-#     for post in retrieved_posts:
-#         date_time = datetime.datetime.now()
-#         records.append({"column-index": str(post['_id']),
-#                         "column-summary": post['summary'],
-#                         "column-datetime": date_time.strftime("%m/%d/%Y, %H:%M:%S")})
-#     return records
-@app.callback(
-    [
-        Output('data-table', 'data'),
-        Output('data-table', 'style_data_conditional')
-    ],
-    [
-        Input('input-id', 'value'),
-        Input('input-id', 'n_submit'),
-    ])
-def update_table(value, n_submit):
-    retrieved_posts = db.posts.find({'worker': value})
-    records, marked = [], []
-
-    for post in retrieved_posts:
-        summary = post.get('summary', post.get('semi-summary')) or post.get('semi-summary')
-        update_datetime = post.get('update_datetime', '')
-        records.append({"column-index": str(post['_id']),
-                        "column-summary": summary,
-                        "column-datetime": update_datetime})
-        if post['completed']:
-            marked.append(str(post['_id']))
-
-    style_data_conditional = [{
-        'if': {
-            'column_id': 'column-index',
-            'filter_query': '{column-index} eq ' + oid,
-        },
-        'backgroundColor': 'rgb(102, 209, 244)',
-        "color": "white",
-    } for oid in marked]
-    return records, style_data_conditional
-
-
 @app.callback(
     [
         Output('source-container', 'children'),
-        Output('textarea-summary', 'value'),
+        Output('textarea-summary', 'value')
     ],
     [
         Input('data-table', 'derived_virtual_row_ids'),
@@ -196,75 +125,84 @@ def load_news(row_ids, selected_row_ids, active_cell, data):
     # if selected_row_ids:
     #     row_idx = selected_row_ids['column-index']
 
+    news_collections = []
+    summary = ""
     if active_cell and data:
-        news_collections = []
-        object_id = data[active_cell['row']]['column-index']
-        retrieved_posts = db.posts.find({"_id": ObjectId(object_id)})
-        post = retrieved_posts[0]
-        for news in post['sources']:
-            news_collections.append(html.P(children=news))
-        summary = post.get('summary', post.get('semi-summary')) or post.get('semi-summary')
-        # update_datetime = post.get('update_datetime', '')
+        if active_cell['row'] < len(data):
+            object_id = data[active_cell['row']]['column-index']
+            retrieved_posts = db.posts.find({"_id": ObjectId(object_id)})
+            post = retrieved_posts[0]
+            for news in post['sources']:
+                news_collections.append(html.P(children=news))
+            summary = post.get('summary', post.get('semi-summary')) or post.get('semi-summary')
 
-        return news_collections, summary
-
-    return [], ""
+    return news_collections, summary
 
 
 @app.callback(
-    # [
-    #     Output('output', 'children'),
-    #     Output('data-table', 'data'),
-    # ],
-    Output('output', 'children'),
     [
+        Output('data-table', 'data'),
+        Output('data-table', 'style_data_conditional')
+    ],
+    [
+        Input('input-id', 'value'),
+        Input('search-button', 'n_clicks'),
         Input('submit-button', 'n_clicks'),
         Input('trash-button', 'n_clicks'),
     ],
     [
         State('data-table', 'data'),
         State('data-table', 'active_cell'),
-        State('textarea-summary', 'value')
+        State('textarea-summary', 'value'),
+        State('data-table', 'style_data_conditional')
     ]
 )
-def update_output(btn1, btn2, data, active_cell, value):
-    message = ""
-    if active_cell:
-        changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
-        if 'submit-button' in changed_id:
-            object_id = data[active_cell['row']]['column-index']
-            date_time = datetime.datetime.now()
-            db.posts.update_one(
-                {"_id": ObjectId(object_id)},
-                {"$set": {"summary": value, "completed": True,
-                          "update_datetime": date_time.strftime("%m/%d/%Y, %H:%M:%S")}},
-                upsert=True
-            )
-            message = "Updated"
-        elif 'trash-button' in changed_id:
-            object_id = data[active_cell['row']]['column-index']
-            db.posts.delete_one({"_id": ObjectId(object_id)})
-            # del data[active_cell['row']]
-            message = "Erased"
+def update_output(input_value, btn1, btn2, btn3, data, active_cell, value, style):
+    changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
+    if 'submit-button' in changed_id and active_cell:
+        object_id = data[active_cell['row']]['column-index']
+        date_time = datetime.datetime.now()
+        db.posts.update_one(
+            {"_id": ObjectId(object_id)},
+            {"$set": {"summary": value, "completed": True,
+                      "update_datetime": date_time.strftime("%m/%d/%Y, %H:%M:%S")}},
+            upsert=True
+        )
+        style.append({
+            'if': {
+                'column_id': 'column-index',
+                'filter_query': '{column-index} eq ' + object_id,
+            },
+            'backgroundColor': 'rgb(102, 209, 244)',
+            "color": "white",
+        })
+    elif 'trash-button' in changed_id and active_cell:
+        object_id = data[active_cell['row']]['column-index']
+        db.posts.delete_one({"_id": ObjectId(object_id)})
+        del data[active_cell['row']]
+    else:
+        retrieved_posts = db.posts.find({'worker': input_value})
+        data, marked = [], []
 
-    return message  #, data if data else []
+        for post in retrieved_posts:
+            summary = post.get('summary', post.get('semi-summary')) or post.get('semi-summary')
+            update_datetime = post.get('update_datetime', '')
+            data.append({"column-index": str(post['_id']),
+                         "column-summary": summary,
+                         "column-datetime": update_datetime})
+            if post['completed']:
+                marked.append(str(post['_id']))
 
+        style = [{
+            'if': {
+                'column_id': 'column-index',
+                'filter_query': '{column-index} eq ' + oid,
+            },
+            'backgroundColor': 'rgb(102, 209, 244)',
+            "color": "white",
+        } for oid in marked]
 
-# @app.callback(
-#     Output('output', 'children'),
-#     [
-#         Input('trash-button', 'n_clicks'),
-#     ],
-#     [
-#         State('data-table', 'data'),
-#         State('data-table', 'active_cell'),
-#     ]
-# )
-# def update_output(n_clicks, data, active_cell):
-#     if n_clicks > 0 and active_cell:
-#         object_id = data[active_cell['row']]['column-index']
-#         db.posts.delete_one({"_id": ObjectId(object_id)})
-#         return "Erased"
+    return data if data else [], style
 
 
 if __name__ == '__main__':
